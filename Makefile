@@ -13,10 +13,12 @@ setup:
 		exit 1; \
 	fi; \
 	HASH=$$(openssl passwd -apr1 "$$PASSWORD"); \
+	# Escape '$' for Docker Compose interpolation in .env values \
+	HASH_ESCAPED=$$(printf '%s\n' "$$HASH" | sed 's/[$]/$$/g'); \
 	if grep -q '^TRAEFIK_HASHED_PASSWORD=' .env; then \
-		sed -i.bak "s|^TRAEFIK_HASHED_PASSWORD=.*|TRAEFIK_HASHED_PASSWORD=$$HASH|" .env; \
+		sed -i.bak "s|^TRAEFIK_HASHED_PASSWORD=.*|TRAEFIK_HASHED_PASSWORD=$$HASH_ESCAPED|" .env; \
 	else \
-		echo "TRAEFIK_HASHED_PASSWORD=$$HASH" >> .env; \
+		echo "TRAEFIK_HASHED_PASSWORD=$$HASH_ESCAPED" >> .env; \
 	fi; \
 	rm -f .env.bak; \
 	echo "Updated TRAEFIK_HASHED_PASSWORD in .env"
