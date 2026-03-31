@@ -11,6 +11,11 @@ RUN mkdir -p /config/.wine && \
     chown -R abc:abc /config/.wine && \
     chmod -R 755 /config/.wine
 
+# Pre-create X11 socket dir with sticky permissions expected by Xvnc/Openbox.
+RUN mkdir -p /tmp/.X11-unix && \
+    chown root:root /tmp/.X11-unix && \
+    chmod 1777 /tmp/.X11-unix
+
 # Comment out problematic or stale apt entries from base image
 RUN sed -i '/bullseye-backports/s/^/#/' /etc/apt/sources.list /etc/apt/sources.list.d/*.list || true && \
     sed -i '/deb\.nodesource\.com/s/^/#/' /etc/apt/sources.list /etc/apt/sources.list.d/*.list || true

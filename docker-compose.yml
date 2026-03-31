@@ -76,6 +76,8 @@ services:
     container_name: mt5
     volumes:
       - ./config:/config
+    tmpfs:
+      - /tmp/.X11-unix:mode=1777
     networks:
       - traefik-public
       - default
