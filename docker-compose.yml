@@ -164,6 +164,8 @@ services:
 
       traefik.http.services.frontend-service.loadbalancer.server.port: 80
     logging: *default-logging
+    profiles:
+      - quant
   
   control-api:
     build:
@@ -195,6 +197,8 @@ services:
 
       traefik.http.services.control-api-service.loadbalancer.server.port: ${CONTROL_API_PORT}
     logging: *default-logging
+    profiles:
+      - quant
 
 
   django:
