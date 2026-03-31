@@ -1,8 +1,15 @@
 from flask import Blueprint, jsonify
 import MetaTrader5 as mt5
 from flasgger import swag_from
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 health_bp = Blueprint('health', __name__)
+
+
+@health_bp.route('/alive')
+def alive_check():
+    """Fast liveness endpoint (does not touch MT5)."""
+    return jsonify({"status": "alive"}), 200
 
 @health_bp.route('/health')
 @swag_from({
@@ -30,11 +37,22 @@ def health_check():
       200:
         description: Health check successful
     """
-    initialized = mt5.initialize() if mt5 is not None else False
+    initialized = False
+    timed_out = False
+    if mt5 is not None:
+        # MT5 initialization can hang during terminal warm-up; cap the probe time.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(mt5.initialize)
+            try:
+                initialized = bool(future.result(timeout=2))
+            except TimeoutError:
+                timed_out = True
+
     return jsonify({
         "status": "healthy",
         "mt5_connected": mt5 is not None,
-        "mt5_initialized": initialized
+        "mt5_initialized": initialized,
+        "mt5_probe_timeout": timed_out
     }), 200
 
 @health_bp.route('/account_info')
