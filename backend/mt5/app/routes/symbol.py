@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify
 import MetaTrader5 as mt5
 from flasgger import swag_from
 import logging
+from lib import initialize_mt5_connection
 
 symbol_bp = Blueprint('symbol', __name__)
 logger = logging.getLogger(__name__)
@@ -43,9 +44,29 @@ def get_symbol_info_tick_endpoint(symbol):
     ---
     description: Retrieve the latest tick information for a given symbol.
     """
+    # Ensure MT5 session is initialized before reading symbol data.
+    if not initialize_mt5_connection(retries=2, delay_seconds=1):
+        error_code, error_str = mt5.last_error()
+        return jsonify({
+            "error": "MT5 not initialized",
+            "last_error": {"code": error_code, "message": error_str},
+        }), 503
+
     tick = mt5.symbol_info_tick(symbol)
+
+    # Some brokers require symbol to be explicitly selected in Market Watch.
     if tick is None:
-        return jsonify({"error": "Failed to get symbol tick info"}), 404
+        mt5.symbol_select(symbol, True)
+        tick = mt5.symbol_info_tick(symbol)
+
+    if tick is None:
+        error_code, error_str = mt5.last_error()
+        return jsonify({
+            "error": "Failed to get symbol tick info",
+            "symbol": symbol,
+            "hint": "Symbol may be unavailable or named differently on this broker (e.g. suffix like m/pro).",
+            "last_error": {"code": error_code, "message": error_str},
+        }), 404
     
     tick_dict = tick._asdict()
     return jsonify(tick_dict)
@@ -93,9 +114,26 @@ def get_symbol_info(symbol):
     ---
     description: Retrieve detailed information for a given symbol.
     """
+    if not initialize_mt5_connection(retries=2, delay_seconds=1):
+        error_code, error_str = mt5.last_error()
+        return jsonify({
+            "error": "MT5 not initialized",
+            "last_error": {"code": error_code, "message": error_str},
+        }), 503
+
     symbol_info = mt5.symbol_info(symbol)
     if symbol_info is None:
-        return jsonify({"error": "Failed to get symbol info"}), 404
+        mt5.symbol_select(symbol, True)
+        symbol_info = mt5.symbol_info(symbol)
+
+    if symbol_info is None:
+        error_code, error_str = mt5.last_error()
+        return jsonify({
+            "error": "Failed to get symbol info",
+            "symbol": symbol,
+            "hint": "Symbol may be unavailable or named differently on this broker (e.g. suffix like m/pro).",
+            "last_error": {"code": error_code, "message": error_str},
+        }), 404
     
     symbol_info_dict = symbol_info._asdict()
     return jsonify(symbol_info_dict)
