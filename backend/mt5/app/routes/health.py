@@ -1,7 +1,6 @@
 from flask import Blueprint, jsonify
 import MetaTrader5 as mt5
 from flasgger import swag_from
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 health_bp = Blueprint('health', __name__)
 
@@ -47,27 +46,25 @@ def health_check():
 
 @health_bp.route('/mt5-health')
 def mt5_health_check():
-    """MT5 probe endpoint with timeout guard."""
-    initialized = False
-    timed_out = False
-    executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        if mt5 is not None:
-            future = executor.submit(mt5.initialize)
-            try:
-                initialized = bool(future.result(timeout=2))
-            except TimeoutError:
-                timed_out = True
-                future.cancel()
-    finally:
-        # Avoid waiting for hung MT5 initialize() call.
-        executor.shutdown(wait=False, cancel_futures=True)
+    """
+    MT5 status endpoint without re-initializing each request.
+    Uses terminal/account snapshot + last_error for diagnosis.
+    """
+    terminal_info = mt5.terminal_info() if mt5 is not None else None
+    account_info = mt5.account_info() if mt5 is not None else None
+    error_code, error_str = mt5.last_error() if mt5 is not None else (None, "mt5 module unavailable")
 
     return jsonify({
         "status": "healthy",
         "mt5_connected": mt5 is not None,
-        "mt5_initialized": initialized,
-        "mt5_probe_timeout": timed_out
+        "mt5_initialized": terminal_info is not None,
+        "terminal_connected": bool(getattr(terminal_info, "connected", False)) if terminal_info else False,
+        "trade_allowed": bool(getattr(terminal_info, "trade_allowed", False)) if terminal_info else False,
+        "account_login": getattr(account_info, "login", None) if account_info else None,
+        "last_error": {
+            "code": error_code,
+            "message": error_str,
+        },
     }), 200
 
 @health_bp.route('/account_info')
@@ -90,9 +87,15 @@ def mt5_health_check():
 })
 def get_account_info():
     try:
-        if not mt5.initialize():
-            print("initialize() failed, error code =",mt5.last_error())
-        account_info = mt5.account_info()._asdict()
+        account_info_raw = mt5.account_info()
+        if account_info_raw is None:
+            error_code, error_str = mt5.last_error()
+            return jsonify({
+                'status': 'error',
+                'reason': f"MT5 account unavailable: {error_code} {error_str}"
+            }), 503
+
+        account_info = account_info_raw._asdict()
 
         return jsonify({
             'status': 'successful',

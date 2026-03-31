@@ -4,8 +4,39 @@ from typing import List, Dict
 import pandas as pd
 from constants import MT5Timeframe
 import logging
+import os
+import time
 
 logger = logging.getLogger(__name__)
+
+
+def initialize_mt5_connection(retries: int = 5, delay_seconds: int = 2) -> bool:
+    """
+    Initialize MT5 session with explicit terminal path and retries.
+    """
+    terminal_path = os.getenv(
+        "MT5_TERMINAL_PATH",
+        r"C:\Program Files\MetaTrader 5\terminal64.exe",
+    )
+
+    for attempt in range(1, retries + 1):
+        try:
+            if mt5.initialize(path=terminal_path):
+                logger.info(f"MT5 initialized successfully (attempt={attempt}, path={terminal_path})")
+                return True
+
+            error_code, error_str = mt5.last_error()
+            logger.error(
+                f"MT5 initialize failed (attempt={attempt}/{retries}, path={terminal_path}, "
+                f"error_code={error_code}, error={error_str})"
+            )
+        except Exception as exc:
+            logger.error(f"MT5 initialize exception (attempt={attempt}/{retries}): {exc}")
+
+        if attempt < retries:
+            time.sleep(delay_seconds)
+
+    return False
 
 def get_timeframe(timeframe_str: str) -> MT5Timeframe:
     try:
@@ -116,8 +147,9 @@ def close_all_positions(order_type='all', magic=None, type_filling=mt5.ORDER_FIL
 
 def get_positions(magic=None):
     # First check if MT5 is initialized
-    if not mt5.initialize():
-        logger.error("Failed to initialize MT5.")
+    if not initialize_mt5_connection(retries=2, delay_seconds=1):
+        error_code, error_str = mt5.last_error()
+        logger.error(f"Failed to initialize MT5 before get_positions: {error_code} {error_str}")
         return pd.DataFrame()
 
     total_positions = mt5.positions_total()

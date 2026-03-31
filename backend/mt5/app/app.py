@@ -7,6 +7,7 @@ import MetaTrader5 as mt5
 from flasgger import Swagger
 from werkzeug.middleware.proxy_fix import ProxyFix
 from swagger import swagger_config
+from lib import initialize_mt5_connection
 
 # Import routes
 from routes.health import health_bp
@@ -50,6 +51,7 @@ app.register_blueprint(error_bp)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 if __name__ == '__main__':
-    if not mt5.initialize():
-        logger.error("Failed to initialize MT5.")
+    if not initialize_mt5_connection():
+        error_code, error_str = mt5.last_error()
+        logger.error(f"Failed to initialize MT5 at startup: {error_code} {error_str}")
     app.run(host='0.0.0.0', port=int(os.environ.get('MT5_API_PORT')))
