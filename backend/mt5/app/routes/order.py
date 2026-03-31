@@ -29,6 +29,53 @@ def _has_live_prices(tick_obj) -> bool:
         return False
 
 
+def _normalize_type_filling(type_filling):
+    filling_map = {
+        "ORDER_FILLING_FOK": mt5.ORDER_FILLING_FOK,
+        "FOK": mt5.ORDER_FILLING_FOK,
+        "ORDER_FILLING_IOC": mt5.ORDER_FILLING_IOC,
+        "IOC": mt5.ORDER_FILLING_IOC,
+        "ORDER_FILLING_RETURN": mt5.ORDER_FILLING_RETURN,
+        "RETURN": mt5.ORDER_FILLING_RETURN,
+    }
+
+    if isinstance(type_filling, int):
+        if type_filling in (
+            mt5.ORDER_FILLING_FOK,
+            mt5.ORDER_FILLING_IOC,
+            mt5.ORDER_FILLING_RETURN,
+        ):
+            return type_filling
+        return None
+
+    if isinstance(type_filling, str):
+        return filling_map.get(type_filling.strip().upper())
+
+    return None
+
+
+def _build_filling_candidates(requested_filling):
+    candidates = []
+
+    if requested_filling is not None:
+        candidates.append(requested_filling)
+
+    # Common broker compatibility order for market execution.
+    candidates.extend(
+        [
+            mt5.ORDER_FILLING_IOC,
+            mt5.ORDER_FILLING_RETURN,
+            mt5.ORDER_FILLING_FOK,
+        ]
+    )
+
+    deduped = []
+    for mode in candidates:
+        if mode not in deduped:
+            deduped.append(mode)
+    return deduped
+
+
 def _find_symbol_candidates(symbol: str):
     requested = symbol.upper().strip()
     candidates = [requested]
@@ -141,8 +188,13 @@ def send_market_order_endpoint():
             "magic": data.get('magic', 0),
             "comment": data.get('comment', ''),
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": data.get('type_filling', mt5.ORDER_FILLING_IOC),
         }
+
+        requested_filling = _normalize_type_filling(data.get('type_filling'))
+        if data.get('type_filling') is not None and requested_filling is None:
+            return jsonify({"error": "Invalid type_filling"}), 400
+        filling_candidates = _build_filling_candidates(requested_filling)
+        request_data["type_filling"] = filling_candidates[0]
 
         # Get current price
         resolved = _resolve_live_symbol_and_tick(data['symbol'])
@@ -175,9 +227,17 @@ def send_market_order_endpoint():
             request_data["volume"] = float(data['volume'])
             
         logger.info(f"Order Request Data: {request_data}")
-        
-        # Send order
-        result = mt5.order_send(request_data)
+
+        # Send order with broker-compatible filling fallback.
+        result = None
+        for filling_mode in filling_candidates:
+            request_data["type_filling"] = filling_mode
+            result = mt5.order_send(request_data)
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                break
+            if result.retcode != mt5.TRADE_RETCODE_INVALID_FILL:
+                break
+
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             error_code, error_str = mt5.last_error()
             
