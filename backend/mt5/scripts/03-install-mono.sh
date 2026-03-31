@@ -23,5 +23,6 @@ else
     log_message "INFO" "Mono is already installed."
 fi
 
-# Initialize Wine configuration
-winecfg
+# Initialize Wine prefix non-interactively.
+# `winecfg` is interactive and can block container startup indefinitely.
+wineboot --init >/dev/null 2>&1 || true
