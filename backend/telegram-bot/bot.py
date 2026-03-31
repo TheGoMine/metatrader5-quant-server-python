@@ -317,18 +317,36 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await _reject_if_not_owner(update):
+        logger.info("forwarded_signal_probe rejected: non-owner user")
         return
 
     if not update.message:
+        logger.info("forwarded_signal_probe skipped: no message object")
+        return
+
+    # Telegram forwarding metadata varies by client/origin type.
+    # Keep this check permissive so forwarded text is still processed reliably.
+    has_forward_marker = bool(
+        getattr(update.message, "forward_origin", None)
+        or getattr(update.message, "forward_date", None)
+        or getattr(update.message, "forward_from", None)
+        or getattr(update.message, "forward_from_chat", None)
+    )
+    if not has_forward_marker:
         return
 
     message_text = update.message.text or update.message.caption or ""
     if not message_text.strip():
+        logger.info("forwarded_signal_probe received forwarded message without text/caption")
+        await update.message.reply_text("Forwarded message has no text to parse.")
         return
 
+    logger.info("forwarded_signal_probe received text: %s", message_text[:200])
     try:
         signal = parse_signal_text(message_text)
     except Exception:
+        logger.exception("forwarded_signal_probe failed to parse signal")
+        await update.message.reply_text("Could not parse forwarded signal format.")
         return
 
     try:
@@ -336,6 +354,13 @@ async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_T
         bid = tick.get("bid")
         ask = tick.get("ask")
         last = tick.get("last")
+        logger.info(
+            "forwarded_signal_probe tick success symbol=%s bid=%s ask=%s last=%s",
+            signal.symbol,
+            bid,
+            ask,
+            last,
+        )
         await update.message.reply_text(
             f"Received signal for asset: {signal.symbol}\n"
             f"Current market price (bid/ask/last): {bid} / {ask} / {last}\n\n"
@@ -367,7 +392,7 @@ def main() -> None:
     app.add_handler(CommandHandler("trim", trim_command))
     app.add_handler(CommandHandler("closeall", closeall_command))
     app.add_handler(CallbackQueryHandler(execute_callback, pattern=r"^exec_(confirm|cancel):"))
-    app.add_handler(MessageHandler(filters.FORWARDED & (~filters.COMMAND), forwarded_signal_probe))
+    app.add_handler(MessageHandler((~filters.COMMAND), forwarded_signal_probe))
 
     logger.info("Starting telegram bot polling loop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
