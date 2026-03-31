@@ -51,6 +51,30 @@ def _is_live_tick(tick: Dict[str, Any]) -> bool:
         return False
 
 
+def _fmt_price(value: Any, digits: int = 5) -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    text = f"{num:.{digits}f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _fmt_volume(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _position_type_label(value: Any) -> str:
+    try:
+        position_type = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return "BUY" if position_type == 0 else "SELL" if position_type == 1 else str(position_type)
+
+
 async def _reject_if_not_owner(update: Update) -> bool:
     if _is_owner(update):
         return False
@@ -138,12 +162,18 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         lines = []
         for pos in positions:
+            ticket = pos.get("ticket", "-")
+            symbol = pos.get("symbol", "-")
+            side = _position_type_label(pos.get("type"))
+            volume = _fmt_volume(pos.get("volume"))
+            open_price = _fmt_price(pos.get("price_open"))
+            sl = _fmt_price(pos.get("sl"))
+            tp = _fmt_price(pos.get("tp"))
             lines.append(
-                f"ticket={pos.get('ticket')} symbol={pos.get('symbol')} "
-                f"type={pos.get('type')} volume={pos.get('volume')} "
-                f"open={pos.get('price_open')} sl={pos.get('sl')} tp={pos.get('tp')}"
+                f"#{ticket} {symbol} {side} {volume} lot\n"
+                f"  Open: {open_price} | SL: {sl} | TP: {tp}"
             )
-        await update.message.reply_text("\n".join(lines[:50]))
+        await update.message.reply_text("\n\n".join(lines[:30]))
     except Exception as exc:
         logger.exception("Trades command failed")
         await update.message.reply_text(f"Failed to fetch trades: {exc}")
