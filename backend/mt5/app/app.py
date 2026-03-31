@@ -1,12 +1,14 @@
 import logging
 import os
 import sys
+import threading
 from flask import Flask
 from dotenv import load_dotenv
 import MetaTrader5 as mt5
 from flasgger import Swagger
 from werkzeug.middleware.proxy_fix import ProxyFix
 from swagger import swagger_config
+from lib import initialize_mt5_connection
 
 # Import routes
 from routes.health import health_bp
@@ -50,6 +52,12 @@ app.register_blueprint(error_bp)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 if __name__ == '__main__':
-    if not mt5.initialize():
-        logger.error("Failed to initialize MT5.")
+    # Do not block web server startup on MT5 initialization.
+    # MT5 IPC can hang during terminal warm-up; initialize in background.
+    def warmup_mt5():
+        if not initialize_mt5_connection():
+            error_code, error_str = mt5.last_error()
+            logger.error(f"Failed to initialize MT5 in warmup: {error_code} {error_str}")
+
+    threading.Thread(target=warmup_mt5, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get('MT5_API_PORT')))
