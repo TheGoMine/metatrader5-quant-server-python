@@ -270,14 +270,19 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     action, request_id = callback_data.split(":", 1)
     store = _pending_store(context)
     pending = store.get(request_id)
-    if not pending:
-        await query.edit_message_text("This request is no longer pending.")
+    if action == "exec_cancel":
+        # Keep the existing details visible and just remove buttons + append cancellation note.
+        base_text = (query.message.text if query.message else "") or (
+            pending.get("preview_text") if pending else "Please confirm execution:"
+        )
+        if "Execution cancelled." not in base_text:
+            base_text = f"{base_text}\n\nExecution cancelled."
+        store.pop(request_id, None)
+        await query.edit_message_text(base_text)
         return
 
-    if action == "exec_cancel":
-        preview_text = pending.get("preview_text", "Please confirm execution:")
-        store.pop(request_id, None)
-        await query.edit_message_text(f"{preview_text}\n\nExecution cancelled.")
+    if not pending:
+        await query.edit_message_text("This request is no longer pending.")
         return
 
     if action != "exec_confirm":
