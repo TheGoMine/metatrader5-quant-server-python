@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 import threading
-from flask import Flask
+from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 import MetaTrader5 as mt5
 from flasgger import Swagger
@@ -39,6 +39,30 @@ app = Flask(__name__)
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 
 swagger = Swagger(app, config=swagger_config)
+
+
+def _is_auth_exempt(path: str) -> bool:
+    # Keep basic health/docs reachable for infra checks.
+    exempt_prefixes = (
+        "/alive",
+        "/health",
+        "/mt5-health",
+        "/apidocs",
+        "/flasgger_static",
+    )
+    return path.startswith(exempt_prefixes)
+
+
+@app.before_request
+def require_api_key():
+    configured_key = os.getenv("MT5_API_KEY", "").strip()
+    if not configured_key or _is_auth_exempt(request.path):
+        return None
+
+    provided_key = request.headers.get("X-API-Key", "").strip()
+    if provided_key != configured_key:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
 
 # Register blueprints
 app.register_blueprint(health_bp)

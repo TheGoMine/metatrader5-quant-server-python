@@ -13,11 +13,16 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv('MT5_API_URL')
+MT5_API_KEY = os.getenv('MT5_API_KEY', '').strip()
+
+
+def _headers() -> Dict[str, str]:
+    return {"X-API-Key": MT5_API_KEY} if MT5_API_KEY else {}
 
 def last_error() -> Dict:
     try:
         url = f"{BASE_URL}/last_error"
-        response = requests.get(url)
+        response = requests.get(url, headers=_headers())
         response.raise_for_status()
         
         data = response.json()
@@ -29,7 +34,7 @@ def last_error() -> Dict:
 def last_error_str() -> Dict:
     try:
         url = f"{BASE_URL}/last_error_str"
-        response = requests.get(url)
+        response = requests.get(url, headers=_headers())
         response.raise_for_status()
         
         data = response.json()

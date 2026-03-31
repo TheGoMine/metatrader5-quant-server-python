@@ -16,6 +16,11 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv('MT5_API_URL')
+MT5_API_KEY = os.getenv('MT5_API_KEY', '').strip()
+
+
+def _headers() -> Dict[str, str]:
+    return {"X-API-Key": MT5_API_KEY} if MT5_API_KEY else {}
 
 def send_market_order(symbol: str, volume: float = None, order_type: str = None, sl: float = None, tp: float = None, position: int = None, position_by: int = None) -> Dict:
     try:
@@ -56,7 +61,7 @@ def send_market_order(symbol: str, volume: float = None, order_type: str = None,
         logger.info(f"Sending order request: {request}")
 
         url = f"{BASE_URL}/order"
-        response = requests.post(url, json=request, timeout=10)
+        response = requests.post(url, json=request, timeout=10, headers=_headers())
         response.raise_for_status()
 
         response_data = response.json()
@@ -101,7 +106,7 @@ def modify_sl_tp(position, sl: float, tp: float = None) -> Dict:
         logger.info(f"Sending modify SL/TP request: {request}")
 
         url = f"{BASE_URL}/modify_sl_tp"
-        response = requests.post(url, json=request, timeout=10)
+        response = requests.post(url, json=request, timeout=10, headers=_headers())
         response.raise_for_status()
 
         response_data = response.json()

@@ -8,14 +8,30 @@ class MT5Client:
     def __init__(self, base_url: Optional[str] = None, timeout: int = 15) -> None:
         self.base_url = (base_url or os.getenv("MT5_API_URL", "http://mt5:5001")).rstrip("/")
         self.timeout = timeout
+        self.api_key = os.getenv("MT5_API_KEY", "").strip()
+
+    def _headers(self) -> Dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"X-API-Key": self.api_key}
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        response = requests.get(f"{self.base_url}{path}", params=params, timeout=self.timeout)
+        response = requests.get(
+            f"{self.base_url}{path}",
+            params=params,
+            timeout=self.timeout,
+            headers=self._headers(),
+        )
         response.raise_for_status()
         return response.json()
 
     def _post(self, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
-        response = requests.post(f"{self.base_url}{path}", json=payload or {}, timeout=self.timeout)
+        response = requests.post(
+            f"{self.base_url}{path}",
+            json=payload or {},
+            timeout=self.timeout,
+            headers=self._headers(),
+        )
         response.raise_for_status()
         return response.json()
 

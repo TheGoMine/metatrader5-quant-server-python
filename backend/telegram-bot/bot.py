@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from typing import Any, Dict, Optional
 
@@ -33,6 +34,20 @@ def _is_owner(update: Update) -> bool:
     if not user or OWNER_ID is None:
         return False
     return user.id == OWNER_ID
+
+
+def _normalize_symbol(raw_symbol: str) -> str:
+    # Remove invisible/formatting characters that may appear in forwarded messages.
+    return re.sub(r"[^A-Z0-9._-]", "", raw_symbol.upper())
+
+
+def _is_live_tick(tick: Dict[str, Any]) -> bool:
+    try:
+        bid = float(tick.get("bid") or 0.0)
+        ask = float(tick.get("ask") or 0.0)
+        return bid > 0 and ask > 0
+    except Exception:
+        return False
 
 
 async def _reject_if_not_owner(update: Update) -> bool:
@@ -355,19 +370,26 @@ async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     try:
-        tick = mt5_client.get_symbol_info_tick(signal.symbol)
+        symbol = _normalize_symbol(signal.symbol)
+        tick = mt5_client.get_symbol_info_tick(symbol)
+        if not _is_live_tick(tick):
+            logger.warning("forwarded_signal_probe non-live tick on first attempt symbol=%s tick=%s", symbol, tick)
+            # Retry once after ensuring symbol subscription on MT5 side.
+            mt5_client.get_symbol_info(symbol)
+            tick = mt5_client.get_symbol_info_tick(symbol)
+
         bid = tick.get("bid")
         ask = tick.get("ask")
         last = tick.get("last")
         logger.info(
             "forwarded_signal_probe tick success symbol=%s bid=%s ask=%s last=%s",
-            signal.symbol,
+            symbol,
             bid,
             ask,
             last,
         )
         await update.message.reply_text(
-            f"Received signal for asset: {signal.symbol}\n"
+            f"Received signal for asset: {symbol}\n"
             f"Current market price (bid/ask/last): {bid} / {ask} / {last}\n\n"
             "Reply to this forwarded message with /execute <usd_integer> to continue."
         )

@@ -13,6 +13,11 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv('MT5_API_URL')
+MT5_API_KEY = os.getenv('MT5_API_KEY', '').strip()
+
+
+def _headers() -> Dict[str, str]:
+    return {"X-API-Key": MT5_API_KEY} if MT5_API_KEY else {}
 
 def history_deals_get(from_date: datetime, to_date: datetime, position: int = None) -> Dict:
     try:
@@ -25,7 +30,7 @@ def history_deals_get(from_date: datetime, to_date: datetime, position: int = No
             params['position'] = position
             
         url = f"{BASE_URL}/history_deals_get"
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, headers=_headers())
         response.raise_for_status()
         
         return response.json()
@@ -38,7 +43,7 @@ def history_orders_get(ticket: int) -> Dict:
         params = {'ticket': ticket}
             
         url = f"{BASE_URL}/history_orders_get"
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, headers=_headers())
         response.raise_for_status()
         
         return response.json()

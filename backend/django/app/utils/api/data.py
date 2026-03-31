@@ -13,11 +13,16 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv('MT5_API_URL')
+MT5_API_KEY = os.getenv('MT5_API_KEY', '').strip()
+
+
+def _headers() -> Dict[str, str]:
+    return {"X-API-Key": MT5_API_KEY} if MT5_API_KEY else {}
 
 def symbol_info_tick(symbol: str) -> pd.DataFrame:
     try:
         url = f"{BASE_URL}/symbol_info_tick/{symbol}"
-        response = requests.get(url)
+        response = requests.get(url, headers=_headers())
         response.raise_for_status()
         
         data = response.json()
@@ -31,7 +36,7 @@ def symbol_info_tick(symbol: str) -> pd.DataFrame:
 def symbol_info(symbol) -> pd.DataFrame:
     try:
         url = f"{BASE_URL}/symbol_info/{symbol}"
-        response = requests.get(url)
+        response = requests.get(url, headers=_headers())
         response.raise_for_status()
         
         data = response.json()
@@ -44,7 +49,7 @@ def symbol_info(symbol) -> pd.DataFrame:
 def fetch_data_pos(symbol: str, timeframe: MT5Timeframe, bars: int) -> pd.DataFrame:
     try:
         url = f"{BASE_URL}/fetch_data_pos?symbol={symbol}&timeframe={timeframe.value}&bars={bars}"
-        response = requests.get(url)
+        response = requests.get(url, headers=_headers())
         response.raise_for_status()
         
         data = response.json()
@@ -63,7 +68,7 @@ def fetch_data_range(symbol: str, timeframe: MT5Timeframe, from_date: datetime, 
             'from_date': from_date,
             'to_date': to_date
         }
-        response = requests.post(url, params=params)
+        response = requests.post(url, params=params, headers=_headers())
         response.raise_for_status()
         
         data = response.json()
