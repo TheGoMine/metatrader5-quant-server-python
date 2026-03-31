@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
+import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -328,6 +329,16 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"symbol={pending['symbol']} action={pending['action']}\n"
             f"orders_success={success} orders_failed={failed}"
         )
+    except requests.exceptions.HTTPError as exc:
+        response_text = ""
+        if exc.response is not None:
+            try:
+                response_text = exc.response.text
+            except Exception:
+                response_text = ""
+        logger.exception("Execute confirmation failed with HTTP error")
+        details = f"\nDetails: {response_text}" if response_text else ""
+        await query.edit_message_text(f"Execute failed: {exc}{details}")
     except Exception as exc:
         logger.exception("Execute confirmation failed")
         await query.edit_message_text(f"Execute failed: {exc}")

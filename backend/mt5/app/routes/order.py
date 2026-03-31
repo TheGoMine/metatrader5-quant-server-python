@@ -6,6 +6,21 @@ from flasgger import swag_from
 order_bp = Blueprint('order', __name__)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_order_type(order_type):
+    if isinstance(order_type, int):
+        if order_type in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_SELL):
+            return order_type
+        return None
+
+    if isinstance(order_type, str):
+        upper = order_type.strip().upper()
+        if upper == "BUY":
+            return mt5.ORDER_TYPE_BUY
+        if upper == "SELL":
+            return mt5.ORDER_TYPE_SELL
+    return None
+
 @order_bp.route('/order', methods=['POST'])
 @swag_from({
     'tags': ['Order'],
@@ -77,10 +92,14 @@ def send_market_order_endpoint():
         if 'position_by' not in data and not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
+        normalized_type = _normalize_order_type(data.get('type'))
+        if not data.get('position_by') and normalized_type is None:
+            return jsonify({"error": "Invalid order type"}), 400
+
         request_data = {
             "action": mt5.TRADE_ACTION_CLOSE_BY if data.get('position_by') else mt5.TRADE_ACTION_DEAL,
             "symbol": data['symbol'],
-            "type": mt5.ORDER_TYPE_CLOSE_BY if data.get('position_by') else data['type'],
+            "type": mt5.ORDER_TYPE_CLOSE_BY if data.get('position_by') else normalized_type,
             "deviation": data.get('deviation', 20),
             "magic": data.get('magic', 0),
             "comment": data.get('comment', ''),

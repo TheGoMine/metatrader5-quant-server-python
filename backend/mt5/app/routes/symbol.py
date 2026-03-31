@@ -7,6 +7,13 @@ from lib import initialize_mt5_connection
 symbol_bp = Blueprint('symbol', __name__)
 logger = logging.getLogger(__name__)
 
+
+def _has_live_prices(tick_obj) -> bool:
+    try:
+        return float(getattr(tick_obj, "bid", 0.0)) > 0 and float(getattr(tick_obj, "ask", 0.0)) > 0
+    except Exception:
+        return False
+
 @symbol_bp.route('/symbol_info_tick/<symbol>', methods=['GET'])
 @swag_from({
     'tags': ['Symbol'],
@@ -54,8 +61,9 @@ def get_symbol_info_tick_endpoint(symbol):
 
     tick = mt5.symbol_info_tick(symbol)
 
-    # Some brokers require symbol to be explicitly selected in Market Watch.
-    if tick is None:
+    # Some brokers require symbol to be explicitly selected in Market Watch,
+    # and some return a non-null tick with 0 bid/ask before first live quote.
+    if tick is None or not _has_live_prices(tick):
         mt5.symbol_select(symbol, True)
         tick = mt5.symbol_info_tick(symbol)
 
