@@ -200,6 +200,22 @@ services:
     profiles:
       - quant
 
+  telegram-bot:
+    build:
+      context: backend/telegram-bot
+      dockerfile: Dockerfile
+    container_name: telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - mt5
+    networks:
+      - default
+    labels:
+      <<: *default-labels
+    logging: *default-logging
+
 
   django:
     build:
