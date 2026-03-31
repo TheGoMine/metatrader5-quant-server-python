@@ -226,6 +226,9 @@ def handle_grid_flow(pubsub, price_diff_key, grid_range_key):
 
 # function running new thread
 def start_grid_bot_sync():
+    if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
+        logger.info("Grid bot sync disabled by ENABLE_QUANT_BOOTSTRAP.")
+        return
 
     try:
         PAIR_INDEX = int(os.getenv('PAIR_INDEX'))

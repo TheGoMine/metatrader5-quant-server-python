@@ -9,6 +9,10 @@ import app.connectors.binance.api.position as position_stream
 logger = logging.getLogger(__name__)
 
 def start_subscriptions():
+    if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
+        logger.info("Arbitrage subscriptions disabled by ENABLE_QUANT_BOOTSTRAP.")
+        return
+
     if os.environ.get('RUN_MAIN') != 'true':
         return
 
