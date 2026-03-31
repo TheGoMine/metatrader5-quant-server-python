@@ -37,16 +37,31 @@ def health_check():
       200:
         description: Health check successful
     """
+    return jsonify({
+        "status": "healthy",
+        "mt5_connected": mt5 is not None,
+        "mt5_initialized": None,
+        "note": "Use /mt5-health for MT5 initialization probe."
+    }), 200
+
+
+@health_bp.route('/mt5-health')
+def mt5_health_check():
+    """MT5 probe endpoint with timeout guard."""
     initialized = False
     timed_out = False
-    if mt5 is not None:
-        # MT5 initialization can hang during terminal warm-up; cap the probe time.
-        with ThreadPoolExecutor(max_workers=1) as executor:
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        if mt5 is not None:
             future = executor.submit(mt5.initialize)
             try:
                 initialized = bool(future.result(timeout=2))
             except TimeoutError:
                 timed_out = True
+                future.cancel()
+    finally:
+        # Avoid waiting for hung MT5 initialize() call.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return jsonify({
         "status": "healthy",
