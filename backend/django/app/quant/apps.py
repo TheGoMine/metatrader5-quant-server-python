@@ -1,10 +1,14 @@
 from django.apps import AppConfig
+import os
 
 class QuantConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'app.quant'
 
     def ready(self):
+        if os.getenv("ENABLE_QUANT_BOOTSTRAP", "true").lower() not in ("1", "true", "yes", "on"):
+            return
+
         from .algorithms.arbitrage import subscribe
         subscribe.start_subscriptions()
         
