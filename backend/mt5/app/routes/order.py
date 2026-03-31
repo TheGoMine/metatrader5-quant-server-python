@@ -21,6 +21,43 @@ def _normalize_order_type(order_type):
             return mt5.ORDER_TYPE_SELL
     return None
 
+
+def _has_live_prices(tick_obj) -> bool:
+    try:
+        return float(getattr(tick_obj, "bid", 0.0)) > 0 and float(getattr(tick_obj, "ask", 0.0)) > 0
+    except Exception:
+        return False
+
+
+def _find_symbol_candidates(symbol: str):
+    requested = symbol.upper().strip()
+    candidates = [requested]
+    try:
+        all_symbols = mt5.symbols_get() or []
+        for sym in all_symbols:
+            name = getattr(sym, "name", "")
+            upper_name = name.upper()
+            if upper_name == requested:
+                continue
+            if upper_name.startswith(requested):
+                candidates.append(name)
+    except Exception:
+        pass
+    return candidates
+
+
+def _resolve_live_symbol_and_tick(symbol: str):
+    fallback = None
+    for candidate in _find_symbol_candidates(symbol):
+        mt5.symbol_select(candidate, True)
+        tick = mt5.symbol_info_tick(candidate)
+        if tick is None:
+            continue
+        fallback = (candidate, tick)
+        if _has_live_prices(tick):
+            return candidate, tick
+    return fallback
+
 @order_bp.route('/order', methods=['POST'])
 @swag_from({
     'tags': ['Order'],
@@ -108,9 +145,11 @@ def send_market_order_endpoint():
         }
 
         # Get current price
-        tick = mt5.symbol_info_tick(data['symbol'])
-        if tick is None:
+        resolved = _resolve_live_symbol_and_tick(data['symbol'])
+        if not resolved:
             return jsonify({"error": "Failed to get symbol price"}), 400
+        resolved_symbol, tick = resolved
+        request_data["symbol"] = resolved_symbol
 
         # Set price based on order type
         if request_data["type"] == mt5.ORDER_TYPE_BUY:

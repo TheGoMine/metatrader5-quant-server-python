@@ -14,6 +14,37 @@ def _has_live_prices(tick_obj) -> bool:
     except Exception:
         return False
 
+
+def _find_symbol_candidates(symbol: str):
+    requested = symbol.upper().strip()
+    candidates = [requested]
+    try:
+        all_symbols = mt5.symbols_get() or []
+        for sym in all_symbols:
+            name = getattr(sym, "name", "")
+            upper_name = name.upper()
+            if upper_name == requested:
+                continue
+            if upper_name.startswith(requested):
+                candidates.append(name)
+    except Exception:
+        # Ignore lookup errors and keep exact symbol only.
+        pass
+    return candidates
+
+
+def _get_live_tick_with_resolution(symbol: str):
+    last_tick = None
+    for candidate in _find_symbol_candidates(symbol):
+        mt5.symbol_select(candidate, True)
+        tick = mt5.symbol_info_tick(candidate)
+        if tick is None:
+            continue
+        last_tick = (candidate, tick)
+        if _has_live_prices(tick):
+            return candidate, tick
+    return last_tick
+
 @symbol_bp.route('/symbol_info_tick/<symbol>', methods=['GET'])
 @swag_from({
     'tags': ['Symbol'],
@@ -59,15 +90,8 @@ def get_symbol_info_tick_endpoint(symbol):
             "last_error": {"code": error_code, "message": error_str},
         }), 503
 
-    tick = mt5.symbol_info_tick(symbol)
-
-    # Some brokers require symbol to be explicitly selected in Market Watch,
-    # and some return a non-null tick with 0 bid/ask before first live quote.
-    if tick is None or not _has_live_prices(tick):
-        mt5.symbol_select(symbol, True)
-        tick = mt5.symbol_info_tick(symbol)
-
-    if tick is None:
+    resolved = _get_live_tick_with_resolution(symbol)
+    if not resolved:
         error_code, error_str = mt5.last_error()
         return jsonify({
             "error": "Failed to get symbol tick info",
@@ -75,8 +99,11 @@ def get_symbol_info_tick_endpoint(symbol):
             "hint": "Symbol may be unavailable or named differently on this broker (e.g. suffix like m/pro).",
             "last_error": {"code": error_code, "message": error_str},
         }), 404
-    
+
+    resolved_symbol, tick = resolved
     tick_dict = tick._asdict()
+    tick_dict["symbol"] = resolved_symbol
+    tick_dict["requested_symbol"] = symbol
     return jsonify(tick_dict)
 
 @symbol_bp.route('/symbol_info/<symbol>', methods=['GET'])
