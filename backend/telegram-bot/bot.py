@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from mt5_client import MT5Client
 from risk import calculate_lot_distribution
@@ -221,6 +221,16 @@ async def execute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "risk_usd": risk_usd,
             "range_low": signal.range_low,
             "range_high": signal.range_high,
+            "preview_text": _format_preview(
+                symbol=signal.symbol,
+                action=signal.action,
+                range_low=signal.range_low,
+                range_high=signal.range_high,
+                stop_loss=signal.stop_loss,
+                take_profits=signal.take_profits,
+                risk_usd=risk_usd,
+                lot_size_per_order=risk_result.rounded_per_tp_lot,
+            ),
         }
 
         keyboard = InlineKeyboardMarkup(
@@ -232,16 +242,7 @@ async def execute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ]
         )
         await update.message.reply_text(
-            _format_preview(
-                symbol=signal.symbol,
-                action=signal.action,
-                range_low=signal.range_low,
-                range_high=signal.range_high,
-                stop_loss=signal.stop_loss,
-                take_profits=signal.take_profits,
-                risk_usd=risk_usd,
-                lot_size_per_order=risk_result.rounded_per_tp_lot,
-            ),
+            store[request_id]["preview_text"],
             reply_markup=keyboard,
         )
     except Exception as exc:
@@ -274,8 +275,9 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if action == "exec_cancel":
+        preview_text = pending.get("preview_text", "Please confirm execution:")
         store.pop(request_id, None)
-        await query.edit_message_text("Execution cancelled.")
+        await query.edit_message_text(f"{preview_text}\n\nExecution cancelled.")
         return
 
     if action != "exec_confirm":
@@ -313,6 +315,40 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         store.pop(request_id, None)
 
 
+async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _reject_if_not_owner(update):
+        return
+
+    if not update.message:
+        return
+
+    message_text = update.message.text or update.message.caption or ""
+    if not message_text.strip():
+        return
+
+    try:
+        signal = parse_signal_text(message_text)
+    except Exception:
+        return
+
+    try:
+        tick = mt5_client.get_symbol_info_tick(signal.symbol)
+        bid = tick.get("bid")
+        ask = tick.get("ask")
+        last = tick.get("last")
+        await update.message.reply_text(
+            f"Received signal for asset: {signal.symbol}\n"
+            f"Current market price (bid/ask/last): {bid} / {ask} / {last}\n\n"
+            "Reply to this forwarded message with /execute <usd_integer> to continue."
+        )
+    except Exception as exc:
+        logger.exception("Forwarded signal probe failed")
+        await update.message.reply_text(
+            f"Received signal for asset: {signal.symbol}\n"
+            f"Failed to fetch current market price: {exc}"
+        )
+
+
 def _validate_env_or_exit() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required.")
@@ -331,6 +367,7 @@ def main() -> None:
     app.add_handler(CommandHandler("trim", trim_command))
     app.add_handler(CommandHandler("closeall", closeall_command))
     app.add_handler(CallbackQueryHandler(execute_callback, pattern=r"^exec_(confirm|cancel):"))
+    app.add_handler(MessageHandler(filters.FORWARDED & (~filters.COMMAND), forwarded_signal_probe))
 
     logger.info("Starting telegram bot polling loop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

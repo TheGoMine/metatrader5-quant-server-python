@@ -33,6 +33,9 @@ class MT5Client:
     def get_symbol_info(self, symbol: str) -> Dict[str, Any]:
         return self._get(f"/symbol_info/{symbol}")
 
+    def get_symbol_info_tick(self, symbol: str) -> Dict[str, Any]:
+        return self._get(f"/symbol_info_tick/{symbol}")
+
     def place_order(
         self,
         symbol: str,
