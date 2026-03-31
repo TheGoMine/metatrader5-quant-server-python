@@ -53,9 +53,10 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         logger.error("Position dictionary missing 'type' or 'ticket' keys.")
         return None
 
+    # To close a position, send an opposite-side market order.
     order_type_dict = {
-        0: mt5.ORDER_TYPE_BUY,
-        1: mt5.ORDER_TYPE_SELL
+        mt5.POSITION_TYPE_BUY: mt5.ORDER_TYPE_SELL,
+        mt5.POSITION_TYPE_SELL: mt5.ORDER_TYPE_BUY,
     }
 
     position_type = position['type']
@@ -63,6 +64,7 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         logger.error(f"Unknown position type: {position_type}")
         return None
 
+    mt5.symbol_select(position['symbol'], True)
     tick = mt5.symbol_info_tick(position['symbol'])
     if tick is None:
         logger.error(f"Failed to get tick for symbol: {position['symbol']}")
@@ -92,7 +94,20 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         "type_filling": type_filling,
     }
 
-    order_result = mt5.order_send(request)
+    filling_candidates = [type_filling, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_FOK]
+    deduped_fillings = []
+    for filling_mode in filling_candidates:
+        if filling_mode not in deduped_fillings:
+            deduped_fillings.append(filling_mode)
+
+    order_result = None
+    for filling_mode in deduped_fillings:
+        request["type_filling"] = filling_mode
+        order_result = mt5.order_send(request)
+        if order_result.retcode == mt5.TRADE_RETCODE_DONE:
+            break
+        if order_result.retcode != mt5.TRADE_RETCODE_INVALID_FILL:
+            break
 
     if order_result.retcode != mt5.TRADE_RETCODE_DONE:
         logger.error(f"Failed to close position {position['ticket']}: {order_result.comment}")
