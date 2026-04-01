@@ -60,8 +60,8 @@ class MT5Client:
         symbol: str,
         volume: float,
         side: str,
-        sl: float,
-        tp: float,
+        sl: Optional[float] = None,
+        tp: Optional[float] = None,
         deviation: int = 20,
         comment: str = "telegram-bot",
     ) -> Dict[str, Any]:
@@ -69,11 +69,13 @@ class MT5Client:
             "symbol": symbol,
             "volume": volume,
             "type": side,
-            "sl": sl,
-            "tp": tp,
             "deviation": deviation,
             "comment": comment,
         }
+        if sl is not None:
+            payload["sl"] = sl
+        if tp is not None:
+            payload["tp"] = tp
         return self._post("/order", payload)
 
     def modify_sl_tp(self, ticket: int, sl: float, tp: float) -> Dict[str, Any]:
