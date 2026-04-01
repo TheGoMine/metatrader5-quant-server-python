@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 BASE_URL = os.getenv('MT5_API_URL')
+MT5_API_KEY = os.getenv('MT5_API_KEY', '').strip()
+
+
+def _headers() -> Dict[str, str]:
+    return {"X-API-Key": MT5_API_KEY} if MT5_API_KEY else {}
 
 empty_df = pd.DataFrame(columns=[
     'ticket', 'time', 'time_msc', 'time_update', 'time_update_msc', 'type',
@@ -28,7 +33,7 @@ def get_positions() -> pd.DataFrame:
     try:
         url = f"{BASE_URL}/get_positions"
         start_time = time.time()  # Start timing
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=10, headers=_headers())
         end_time = time.time()    # End timing
         duration = end_time - start_time
         logger.info(f"Fetched positions in {duration:.2f} seconds")
@@ -64,7 +69,7 @@ def get_position_by_symbol(symbol: str) -> Dict:
     latest_update = datetime.now(thailand_tz).strftime("%Y-%m-%d %H:%M:%S")  #symbol_positions['time_update'].max()
     # Data for no position data
     url = f"{BASE_URL}/symbol_info_tick/{symbol}"
-    response = requests.get(url, timeout=10)
+    response = requests.get(url, timeout=10, headers=_headers())
     data = response.json()
 
     if symbol_positions.empty:

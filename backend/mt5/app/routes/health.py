@@ -101,7 +101,15 @@ def get_account_info():
             'status': 'successful',
             'login': account_info['login'],
             'server': account_info['server'],
-            'name': account_info['name']
+            'name': account_info['name'],
+            'currency': account_info.get('currency'),
+            'leverage': account_info.get('leverage'),
+            'balance': account_info.get('balance'),
+            'equity': account_info.get('equity'),
+            'margin': account_info.get('margin'),
+            'margin_free': account_info.get('margin_free'),
+            'margin_level': account_info.get('margin_level'),
+            'profit': account_info.get('profit'),
         }), 200
     except Exception as e:
         return jsonify({

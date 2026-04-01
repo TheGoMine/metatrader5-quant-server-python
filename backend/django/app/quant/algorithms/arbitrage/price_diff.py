@@ -86,6 +86,10 @@ def comparison_loop():
         time.sleep(1)
 
 def start_comparison():
+    if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
+        logger.info("Price comparison loop disabled by ENABLE_QUANT_BOOTSTRAP.")
+        return
+
     if os.environ.get('RUN_MAIN') != 'true':
         return
     

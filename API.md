@@ -76,6 +76,12 @@ curl -k -X POST "https://<DJANGO_DOMAIN>/v1/send_market_order/" \
 
 ## MT5 Flask API
 
+When `MT5_API_KEY` is configured, MT5 endpoints require header:
+
+```bash
+-H "X-API-Key: <MT5_API_KEY>"
+```
+
 ### Discovery
 
 - Swagger UI:

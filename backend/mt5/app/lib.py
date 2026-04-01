@@ -1,6 +1,6 @@
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pandas as pd
 from constants import MT5Timeframe
 import logging
@@ -8,6 +8,17 @@ import os
 import time
 
 logger = logging.getLogger(__name__)
+
+
+def _get_optional_login() -> Optional[int]:
+    raw_login = os.getenv("MT5_LOGIN") or os.getenv("MT5_ACCOUNT")
+    if not raw_login:
+        return None
+    try:
+        return int(str(raw_login).strip())
+    except ValueError:
+        logger.error("Invalid MT5_LOGIN/MT5_ACCOUNT value; expected integer login id.")
+        return None
 
 
 def initialize_mt5_connection(retries: int = 5, delay_seconds: int = 2) -> bool:
@@ -18,11 +29,40 @@ def initialize_mt5_connection(retries: int = 5, delay_seconds: int = 2) -> bool:
         "MT5_TERMINAL_PATH",
         r"C:\Program Files\MetaTrader 5\terminal64.exe",
     )
+    login = _get_optional_login()
+    password = os.getenv("MT5_PASSWORD")
+    server = os.getenv("MT5_SERVER")
 
     for attempt in range(1, retries + 1):
         try:
             if mt5.initialize(path=terminal_path):
-                logger.info(f"MT5 initialized successfully (attempt={attempt}, path={terminal_path})")
+                # Explicit login avoids silently reusing terminal's last session
+                # (often demo) when a real account is intended.
+                if login is not None:
+                    login_kwargs = {"login": login}
+                    if password:
+                        login_kwargs["password"] = password
+                    if server:
+                        login_kwargs["server"] = server
+
+                    if not mt5.login(**login_kwargs):
+                        error_code, error_str = mt5.last_error()
+                        logger.error(
+                            f"MT5 login failed (attempt={attempt}/{retries}, login={login}, "
+                            f"server={server or '<default>'}, error_code={error_code}, error={error_str})"
+                        )
+                        mt5.shutdown()
+                        if attempt < retries:
+                            time.sleep(delay_seconds)
+                        continue
+
+                account_info = mt5.account_info()
+                active_login = getattr(account_info, "login", None) if account_info else None
+                active_server = getattr(account_info, "server", None) if account_info else None
+                logger.info(
+                    f"MT5 initialized successfully (attempt={attempt}, path={terminal_path}, "
+                    f"active_login={active_login}, active_server={active_server})"
+                )
                 return True
 
             error_code, error_str = mt5.last_error()
@@ -53,9 +93,10 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         logger.error("Position dictionary missing 'type' or 'ticket' keys.")
         return None
 
+    # To close a position, send an opposite-side market order.
     order_type_dict = {
-        0: mt5.ORDER_TYPE_BUY,
-        1: mt5.ORDER_TYPE_SELL
+        mt5.POSITION_TYPE_BUY: mt5.ORDER_TYPE_SELL,
+        mt5.POSITION_TYPE_SELL: mt5.ORDER_TYPE_BUY,
     }
 
     position_type = position['type']
@@ -63,14 +104,17 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         logger.error(f"Unknown position type: {position_type}")
         return None
 
+    mt5.symbol_select(position['symbol'], True)
     tick = mt5.symbol_info_tick(position['symbol'])
     if tick is None:
         logger.error(f"Failed to get tick for symbol: {position['symbol']}")
         return None
 
     price_dict = {
-        0: tick.ask,  # Buy order uses Ask price
-        1: tick.bid   # Sell order uses Bid price
+        # Closing a BUY position sends a SELL order -> use Bid.
+        mt5.POSITION_TYPE_BUY: tick.bid,
+        # Closing a SELL position sends a BUY order -> use Ask.
+        mt5.POSITION_TYPE_SELL: tick.ask,
     }
 
     price = price_dict[position_type]
@@ -92,7 +136,20 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         "type_filling": type_filling,
     }
 
-    order_result = mt5.order_send(request)
+    filling_candidates = [type_filling, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_FOK]
+    deduped_fillings = []
+    for filling_mode in filling_candidates:
+        if filling_mode not in deduped_fillings:
+            deduped_fillings.append(filling_mode)
+
+    order_result = None
+    for filling_mode in deduped_fillings:
+        request["type_filling"] = filling_mode
+        order_result = mt5.order_send(request)
+        if order_result.retcode == mt5.TRADE_RETCODE_DONE:
+            break
+        if order_result.retcode != mt5.TRADE_RETCODE_INVALID_FILL:
+            break
 
     if order_result.retcode != mt5.TRADE_RETCODE_DONE:
         logger.error(f"Failed to close position {position['ticket']}: {order_result.comment}")

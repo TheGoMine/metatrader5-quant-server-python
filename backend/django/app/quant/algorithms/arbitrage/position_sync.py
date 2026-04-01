@@ -100,6 +100,10 @@ def handle_position_update(pubsub):
         logger.error(f"Error processing position update: {e}", exc_info=True)
 
 def start_position_sync():
+    if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
+        logger.info("Position sync disabled by ENABLE_QUANT_BOOTSTRAP.")
+        return
+
     if os.environ.get('RUN_MAIN') != 'true':
         return
     

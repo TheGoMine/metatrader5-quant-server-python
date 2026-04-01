@@ -45,10 +45,18 @@ These are mostly long-running loops/threads and Redis pubsub consumers.
 A startup gate was added in `backend/django/app/quant/apps.py`:
 - Env flag: `ENABLE_QUANT_BOOTSTRAP`
 - Behavior:
-  - `true` (default): startup hooks run and algorithms auto-start.
-  - `false`: `ready()` returns early, so algorithm startup hooks do not run.
+  - `true`: startup hooks run and algorithms auto-start.
+  - `false` (default): `ready()` returns early, so algorithm startup hooks do not run.
 
 This disables automatic algorithm execution while keeping Django API endpoints alive.
+As an extra safety layer, each arbitrage `start_*()` launcher also checks this flag and exits early when disabled.
+
+Currently disabled startup hooks:
+- `subscribe.start_subscriptions()`
+- `position_sync.start_position_sync()`
+- `net_position.start_net_position_check()`
+- `price_diff.start_comparison()`
+- `grid_bot.start_grid_bot_sync()`
 
 ## How To Reverse (Re-enable Algorithms)
 

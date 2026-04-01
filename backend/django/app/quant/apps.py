@@ -6,7 +6,8 @@ class QuantConfig(AppConfig):
     name = 'app.quant'
 
     def ready(self):
-        if os.getenv("ENABLE_QUANT_BOOTSTRAP", "true").lower() not in ("1", "true", "yes", "on"):
+        # Keep algorithm bootstrap opt-in to avoid noisy background API polling.
+        if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
             return
 
         from .algorithms.arbitrage import subscribe

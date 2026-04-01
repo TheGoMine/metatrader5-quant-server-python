@@ -43,6 +43,10 @@ def check_position_loop():
         time.sleep(1)
 
 def start_net_position_check():
+    if os.getenv("ENABLE_QUANT_BOOTSTRAP", "false").lower() not in ("1", "true", "yes", "on"):
+        logger.info("Net position checker disabled by ENABLE_QUANT_BOOTSTRAP.")
+        return
+
     if os.environ.get('RUN_MAIN') != 'true':
         return
     

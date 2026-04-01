@@ -6,6 +6,105 @@ from flasgger import swag_from
 order_bp = Blueprint('order', __name__)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_order_type(order_type):
+    if isinstance(order_type, int):
+        if order_type in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_SELL):
+            return order_type
+        return None
+
+    if isinstance(order_type, str):
+        upper = order_type.strip().upper()
+        if upper == "BUY":
+            return mt5.ORDER_TYPE_BUY
+        if upper == "SELL":
+            return mt5.ORDER_TYPE_SELL
+    return None
+
+
+def _has_live_prices(tick_obj) -> bool:
+    try:
+        return float(getattr(tick_obj, "bid", 0.0)) > 0 and float(getattr(tick_obj, "ask", 0.0)) > 0
+    except Exception:
+        return False
+
+
+def _normalize_type_filling(type_filling):
+    filling_map = {
+        "ORDER_FILLING_FOK": mt5.ORDER_FILLING_FOK,
+        "FOK": mt5.ORDER_FILLING_FOK,
+        "ORDER_FILLING_IOC": mt5.ORDER_FILLING_IOC,
+        "IOC": mt5.ORDER_FILLING_IOC,
+        "ORDER_FILLING_RETURN": mt5.ORDER_FILLING_RETURN,
+        "RETURN": mt5.ORDER_FILLING_RETURN,
+    }
+
+    if isinstance(type_filling, int):
+        if type_filling in (
+            mt5.ORDER_FILLING_FOK,
+            mt5.ORDER_FILLING_IOC,
+            mt5.ORDER_FILLING_RETURN,
+        ):
+            return type_filling
+        return None
+
+    if isinstance(type_filling, str):
+        return filling_map.get(type_filling.strip().upper())
+
+    return None
+
+
+def _build_filling_candidates(requested_filling):
+    candidates = []
+
+    if requested_filling is not None:
+        candidates.append(requested_filling)
+
+    # Common broker compatibility order for market execution.
+    candidates.extend(
+        [
+            mt5.ORDER_FILLING_IOC,
+            mt5.ORDER_FILLING_RETURN,
+            mt5.ORDER_FILLING_FOK,
+        ]
+    )
+
+    deduped = []
+    for mode in candidates:
+        if mode not in deduped:
+            deduped.append(mode)
+    return deduped
+
+
+def _find_symbol_candidates(symbol: str):
+    requested = symbol.upper().strip()
+    candidates = [requested]
+    try:
+        all_symbols = mt5.symbols_get() or []
+        for sym in all_symbols:
+            name = getattr(sym, "name", "")
+            upper_name = name.upper()
+            if upper_name == requested:
+                continue
+            if upper_name.startswith(requested):
+                candidates.append(name)
+    except Exception:
+        pass
+    return candidates
+
+
+def _resolve_live_symbol_and_tick(symbol: str):
+    fallback = None
+    for candidate in _find_symbol_candidates(symbol):
+        mt5.symbol_select(candidate, True)
+        tick = mt5.symbol_info_tick(candidate)
+        if tick is None:
+            continue
+        fallback = (candidate, tick)
+        if _has_live_prices(tick):
+            return candidate, tick
+    return fallback
+
 @order_bp.route('/order', methods=['POST'])
 @swag_from({
     'tags': ['Order'],
@@ -77,21 +176,32 @@ def send_market_order_endpoint():
         if 'position_by' not in data and not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
+        normalized_type = _normalize_order_type(data.get('type'))
+        if not data.get('position_by') and normalized_type is None:
+            return jsonify({"error": "Invalid order type"}), 400
+
         request_data = {
             "action": mt5.TRADE_ACTION_CLOSE_BY if data.get('position_by') else mt5.TRADE_ACTION_DEAL,
             "symbol": data['symbol'],
-            "type": mt5.ORDER_TYPE_CLOSE_BY if data.get('position_by') else data['type'],
+            "type": mt5.ORDER_TYPE_CLOSE_BY if data.get('position_by') else normalized_type,
             "deviation": data.get('deviation', 20),
             "magic": data.get('magic', 0),
             "comment": data.get('comment', ''),
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": data.get('type_filling', mt5.ORDER_FILLING_IOC),
         }
 
+        requested_filling = _normalize_type_filling(data.get('type_filling'))
+        if data.get('type_filling') is not None and requested_filling is None:
+            return jsonify({"error": "Invalid type_filling"}), 400
+        filling_candidates = _build_filling_candidates(requested_filling)
+        request_data["type_filling"] = filling_candidates[0]
+
         # Get current price
-        tick = mt5.symbol_info_tick(data['symbol'])
-        if tick is None:
+        resolved = _resolve_live_symbol_and_tick(data['symbol'])
+        if not resolved:
             return jsonify({"error": "Failed to get symbol price"}), 400
+        resolved_symbol, tick = resolved
+        request_data["symbol"] = resolved_symbol
 
         # Set price based on order type
         if request_data["type"] == mt5.ORDER_TYPE_BUY:
@@ -117,9 +227,17 @@ def send_market_order_endpoint():
             request_data["volume"] = float(data['volume'])
             
         logger.info(f"Order Request Data: {request_data}")
-        
-        # Send order
-        result = mt5.order_send(request_data)
+
+        # Send order with broker-compatible filling fallback.
+        result = None
+        for filling_mode in filling_candidates:
+            request_data["type_filling"] = filling_mode
+            result = mt5.order_send(request_data)
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                break
+            if result.retcode != mt5.TRADE_RETCODE_INVALID_FILL:
+                break
+
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             error_code, error_str = mt5.last_error()
             
