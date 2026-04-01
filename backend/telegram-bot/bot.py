@@ -29,6 +29,7 @@ OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW else None
 mt5_client = MT5Client()
 PENDING_EXECUTIONS_KEY = "pending_executions"
 PENDING_CLOSEALL_KEY = "pending_closeall"
+PENDING_TRIM_KEY = "pending_trim"
 
 
 def _is_owner(update: Update) -> bool:
@@ -103,6 +104,12 @@ def _pending_closeall_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Dic
     return context.application.bot_data[PENDING_CLOSEALL_KEY]
 
 
+def _pending_trim_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Dict[str, Any]]:
+    if PENDING_TRIM_KEY not in context.application.bot_data:
+        context.application.bot_data[PENDING_TRIM_KEY] = {}
+    return context.application.bot_data[PENDING_TRIM_KEY]
+
+
 def _format_positions_preview(positions: list[Dict[str, Any]], max_items: int = 20) -> str:
     if not positions:
         return "No open trades."
@@ -119,6 +126,30 @@ def _format_positions_preview(positions: list[Dict[str, Any]], max_items: int = 
         lines.append(
             f"#{ticket} {symbol} {side} {volume} lot\n"
             f"  Open: {open_price} | SL: {sl} | TP: {tp}"
+        )
+
+    if len(positions) > max_items:
+        lines.append(f"... and {len(positions) - max_items} more")
+    return "\n\n".join(lines)
+
+
+def _format_trim_preview(positions: list[Dict[str, Any]], max_items: int = 20) -> str:
+    if not positions:
+        return "No open trades to trim."
+
+    lines = [f"Trim candidates ({len(positions)}):"]
+    for pos in positions[:max_items]:
+        lines.append(
+            "\n".join(
+                [
+                    f"Ticket ID: {pos.get('ticket', '-')}",
+                    f"Symbol: {pos.get('symbol', '-')}",
+                    f"Volume: {_fmt_volume(pos.get('volume'))}",
+                    f"TP: {_fmt_price(pos.get('tp'))}",
+                    f"Open: {_fmt_price(pos.get('price_open'))}",
+                    f"SL: {_fmt_price(pos.get('sl'))}",
+                ]
+            )
         )
 
     if len(positions) > max_items:
@@ -268,19 +299,24 @@ async def trim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text("No open trades to trim.")
             return
 
-        success = 0
-        failed = 0
-        for pos in positions:
-            try:
-                ticket = int(pos["ticket"])
-                entry_price = float(pos["price_open"])
-                current_tp = float(pos.get("tp") or 0.0)
-                mt5_client.modify_sl_tp(ticket=ticket, sl=entry_price, tp=current_tp)
-                success += 1
-            except Exception:
-                failed += 1
+        request_id = uuid.uuid4().hex[:10]
+        preview_text = (
+            f"{_format_trim_preview(positions)}\n\n"
+            "Execute trim for all listed trades?\n"
+            "Press Execute to continue or Cancel to abort."
+        )
+        store = _pending_trim_store(context)
+        store[request_id] = {"preview_text": preview_text}
 
-        await update.message.reply_text(f"Trim complete. updated={success} failed={failed}")
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Execute", callback_data=f"trim_confirm:{request_id}"),
+                    InlineKeyboardButton("Cancel", callback_data=f"trim_cancel:{request_id}"),
+                ]
+            ]
+        )
+        await update.message.reply_text(preview_text, reply_markup=keyboard)
     except Exception as exc:
         logger.exception("Trim command failed")
         await update.message.reply_text(f"Failed to trim trades: {exc}")
@@ -530,6 +566,69 @@ async def closeall_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         store.pop(request_id, None)
 
 
+async def trim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()
+
+    user = update.effective_user
+    if not user or OWNER_ID is None or user.id != OWNER_ID:
+        await query.edit_message_text("Unauthorized user.")
+        return
+
+    callback_data = query.data or ""
+    if ":" not in callback_data:
+        await query.edit_message_text("Invalid action.")
+        return
+
+    action, request_id = callback_data.split(":", 1)
+    store = _pending_trim_store(context)
+    pending = store.get(request_id)
+    if not pending:
+        await query.edit_message_text("This request is no longer pending.")
+        return
+
+    base_text = (query.message.text if query.message else "") or pending.get("preview_text", "Trim execution request.")
+
+    if action == "trim_cancel":
+        if "Execution cancelled." not in base_text:
+            base_text = f"{base_text}\n\nExecution cancelled."
+        store.pop(request_id, None)
+        await query.edit_message_text(base_text)
+        return
+
+    if action != "trim_confirm":
+        await query.edit_message_text("Invalid action.")
+        return
+
+    try:
+        positions = mt5_client.get_positions()
+        if not positions:
+            await query.edit_message_text(f"{base_text}\n\nNo open trades to trim.")
+            return
+
+        success = 0
+        failed = 0
+        for pos in positions:
+            try:
+                ticket = int(pos["ticket"])
+                entry_price = float(pos["price_open"])
+                current_tp = float(pos.get("tp") or 0.0)
+                mt5_client.modify_sl_tp(ticket=ticket, sl=entry_price, tp=current_tp)
+                success += 1
+            except Exception:
+                failed += 1
+
+        await query.edit_message_text(f"{base_text}\n\nTrim complete. updated={success} failed={failed}")
+    except Exception as exc:
+        logger.exception("Trim confirmation failed")
+        await query.edit_message_text(f"{base_text}\n\nTrim failed: {exc}")
+    finally:
+        store.pop(request_id, None)
+
+
 async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await _reject_if_not_owner(update):
         logger.info("forwarded_signal_probe rejected: non-owner user")
@@ -615,6 +714,7 @@ def main() -> None:
     app.add_handler(CommandHandler("trim", trim_command))
     app.add_handler(CommandHandler("closeall", closeall_command))
     app.add_handler(CallbackQueryHandler(execute_callback, pattern=r"^exec_(confirm|cancel):"))
+    app.add_handler(CallbackQueryHandler(trim_callback, pattern=r"^trim_(confirm|cancel):"))
     app.add_handler(CallbackQueryHandler(closeall_callback, pattern=r"^closeall_(confirm|cancel):"))
     app.add_handler(MessageHandler((~filters.COMMAND), forwarded_signal_probe))
 
