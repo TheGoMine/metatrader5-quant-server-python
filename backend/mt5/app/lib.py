@@ -10,6 +10,17 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def _get_optional_login() -> int | None:
+    raw_login = os.getenv("MT5_LOGIN") or os.getenv("MT5_ACCOUNT")
+    if not raw_login:
+        return None
+    try:
+        return int(str(raw_login).strip())
+    except ValueError:
+        logger.error("Invalid MT5_LOGIN/MT5_ACCOUNT value; expected integer login id.")
+        return None
+
+
 def initialize_mt5_connection(retries: int = 5, delay_seconds: int = 2) -> bool:
     """
     Initialize MT5 session with explicit terminal path and retries.
@@ -18,11 +29,40 @@ def initialize_mt5_connection(retries: int = 5, delay_seconds: int = 2) -> bool:
         "MT5_TERMINAL_PATH",
         r"C:\Program Files\MetaTrader 5\terminal64.exe",
     )
+    login = _get_optional_login()
+    password = os.getenv("MT5_PASSWORD")
+    server = os.getenv("MT5_SERVER")
 
     for attempt in range(1, retries + 1):
         try:
             if mt5.initialize(path=terminal_path):
-                logger.info(f"MT5 initialized successfully (attempt={attempt}, path={terminal_path})")
+                # Explicit login avoids silently reusing terminal's last session
+                # (often demo) when a real account is intended.
+                if login is not None:
+                    login_kwargs = {"login": login}
+                    if password:
+                        login_kwargs["password"] = password
+                    if server:
+                        login_kwargs["server"] = server
+
+                    if not mt5.login(**login_kwargs):
+                        error_code, error_str = mt5.last_error()
+                        logger.error(
+                            f"MT5 login failed (attempt={attempt}/{retries}, login={login}, "
+                            f"server={server or '<default>'}, error_code={error_code}, error={error_str})"
+                        )
+                        mt5.shutdown()
+                        if attempt < retries:
+                            time.sleep(delay_seconds)
+                        continue
+
+                account_info = mt5.account_info()
+                active_login = getattr(account_info, "login", None) if account_info else None
+                active_server = getattr(account_info, "server", None) if account_info else None
+                logger.info(
+                    f"MT5 initialized successfully (attempt={attempt}, path={terminal_path}, "
+                    f"active_login={active_login}, active_server={active_server})"
+                )
                 return True
 
             error_code, error_str = mt5.last_error()
