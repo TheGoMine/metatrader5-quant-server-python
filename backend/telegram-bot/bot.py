@@ -28,6 +28,7 @@ OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW else None
 
 mt5_client = MT5Client()
 PENDING_EXECUTIONS_KEY = "pending_executions"
+PENDING_CLOSEALL_KEY = "pending_closeall"
 
 
 def _is_owner(update: Update) -> bool:
@@ -94,6 +95,35 @@ def _pending_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Dict[str, An
     if PENDING_EXECUTIONS_KEY not in context.application.bot_data:
         context.application.bot_data[PENDING_EXECUTIONS_KEY] = {}
     return context.application.bot_data[PENDING_EXECUTIONS_KEY]
+
+
+def _pending_closeall_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Dict[str, Any]]:
+    if PENDING_CLOSEALL_KEY not in context.application.bot_data:
+        context.application.bot_data[PENDING_CLOSEALL_KEY] = {}
+    return context.application.bot_data[PENDING_CLOSEALL_KEY]
+
+
+def _format_positions_preview(positions: list[Dict[str, Any]], max_items: int = 20) -> str:
+    if not positions:
+        return "No open trades."
+
+    lines = [f"Open trades ({len(positions)}):"]
+    for pos in positions[:max_items]:
+        ticket = pos.get("ticket", "-")
+        symbol = pos.get("symbol", "-")
+        side = _position_type_label(pos.get("type"))
+        volume = _fmt_volume(pos.get("volume"))
+        open_price = _fmt_price(pos.get("price_open"))
+        sl = _fmt_price(pos.get("sl"))
+        tp = _fmt_price(pos.get("tp"))
+        lines.append(
+            f"#{ticket} {symbol} {side} {volume} lot\n"
+            f"  Open: {open_price} | SL: {sl} | TP: {tp}"
+        )
+
+    if len(positions) > max_items:
+        lines.append(f"... and {len(positions) - max_items} more")
+    return "\n\n".join(lines)
 
 
 def _format_preview(
@@ -260,9 +290,29 @@ async def closeall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if await _reject_if_not_owner(update):
         return
     try:
-        resp = mt5_client.close_all_positions()
-        results = resp.get("results", []) if isinstance(resp, dict) else []
-        await update.message.reply_text(f"Close all complete. closed={len(results)}")
+        positions = mt5_client.get_positions()
+        if not positions:
+            await update.message.reply_text("No open trades to close.")
+            return
+
+        request_id = uuid.uuid4().hex[:10]
+        preview_text = (
+            f"{_format_positions_preview(positions)}\n\n"
+            "Close all open trades?\n"
+            "Press Confirm to execute or Cancel to abort."
+        )
+        store = _pending_closeall_store(context)
+        store[request_id] = {"preview_text": preview_text}
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Confirm", callback_data=f"closeall_confirm:{request_id}"),
+                    InlineKeyboardButton("Cancel", callback_data=f"closeall_cancel:{request_id}"),
+                ]
+            ]
+        )
+        await update.message.reply_text(preview_text, reply_markup=keyboard)
     except Exception as exc:
         logger.exception("Closeall command failed")
         await update.message.reply_text(f"Failed to close all trades: {exc}")
@@ -426,6 +476,60 @@ async def execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         store.pop(request_id, None)
 
 
+async def closeall_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()
+
+    user = update.effective_user
+    if not user or OWNER_ID is None or user.id != OWNER_ID:
+        await query.edit_message_text("Unauthorized user.")
+        return
+
+    callback_data = query.data or ""
+    if ":" not in callback_data:
+        await query.edit_message_text("Invalid action.")
+        return
+
+    action, request_id = callback_data.split(":", 1)
+    store = _pending_closeall_store(context)
+    pending = store.get(request_id)
+    if not pending:
+        await query.edit_message_text("This request is no longer pending.")
+        return
+
+    base_text = (query.message.text if query.message else "") or pending.get("preview_text", "Close all open trades?")
+
+    if action == "closeall_cancel":
+        if "Execution cancelled." not in base_text:
+            base_text = f"{base_text}\n\nExecution cancelled."
+        store.pop(request_id, None)
+        await query.edit_message_text(base_text)
+        return
+
+    if action != "closeall_confirm":
+        await query.edit_message_text("Invalid action.")
+        return
+
+    try:
+        resp = mt5_client.close_all_positions()
+        if not isinstance(resp, dict):
+            result_text = "Close all failed: invalid API response."
+        else:
+            results = resp.get("results", [])
+            closed_count = len(results) if isinstance(results, list) else 0
+            message = resp.get("message", "Close all complete.")
+            result_text = f"{message}\nclosed={closed_count}"
+        await query.edit_message_text(f"{base_text}\n\n{result_text}")
+    except Exception as exc:
+        logger.exception("Closeall confirmation failed")
+        await query.edit_message_text(f"{base_text}\n\nClose all failed: {exc}")
+    finally:
+        store.pop(request_id, None)
+
+
 async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await _reject_if_not_owner(update):
         logger.info("forwarded_signal_probe rejected: non-owner user")
@@ -511,6 +615,7 @@ def main() -> None:
     app.add_handler(CommandHandler("trim", trim_command))
     app.add_handler(CommandHandler("closeall", closeall_command))
     app.add_handler(CallbackQueryHandler(execute_callback, pattern=r"^exec_(confirm|cancel):"))
+    app.add_handler(CallbackQueryHandler(closeall_callback, pattern=r"^closeall_(confirm|cancel):"))
     app.add_handler(MessageHandler((~filters.COMMAND), forwarded_signal_probe))
 
     logger.info("Starting telegram bot polling loop.")

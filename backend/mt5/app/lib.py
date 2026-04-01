@@ -111,8 +111,10 @@ def close_position(position, deviation=20, magic=0, comment='', type_filling=mt5
         return None
 
     price_dict = {
-        0: tick.ask,  # Buy order uses Ask price
-        1: tick.bid   # Sell order uses Bid price
+        # Closing a BUY position sends a SELL order -> use Bid.
+        mt5.POSITION_TYPE_BUY: tick.bid,
+        # Closing a SELL position sends a BUY order -> use Ask.
+        mt5.POSITION_TYPE_SELL: tick.ask,
     }
 
     price = price_dict[position_type]
