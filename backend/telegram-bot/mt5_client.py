@@ -38,6 +38,9 @@ class MT5Client:
     def get_mt5_health(self) -> Dict[str, Any]:
         return self._get("/mt5-health")
 
+    def get_account_info(self) -> Dict[str, Any]:
+        return self._get("/account_info")
+
     def get_positions(self) -> List[Dict[str, Any]]:
         data = self._get("/get_positions")
         if isinstance(data, list):

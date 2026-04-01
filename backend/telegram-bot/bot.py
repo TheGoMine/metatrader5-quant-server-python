@@ -67,6 +67,13 @@ def _fmt_volume(value: Any) -> str:
         return "-"
 
 
+def _fmt_money(value: Any, digits: int = 2) -> str:
+    try:
+        return f"{float(value):,.{digits}f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
 def _position_type_label(value: Any) -> str:
     try:
         position_type = int(value)
@@ -149,6 +156,49 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as exc:
         logger.exception("Status command failed")
         await update.message.reply_text(f"Failed to fetch status: {exc}")
+
+
+async def account_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _reject_if_not_owner(update):
+        return
+    try:
+        account = mt5_client.get_account_info()
+        if not isinstance(account, dict):
+            await update.message.reply_text("Failed to fetch account info: invalid API response.")
+            return
+
+        if account.get("status") == "error":
+            await update.message.reply_text(
+                f"Failed to fetch account info: {account.get('reason', 'unknown error')}"
+            )
+            return
+
+        lines = [
+            "MT5 Account",
+            f"ID: {account.get('login', '-')}",
+            f"Name: {account.get('name', '-')}",
+            f"Server: {account.get('server', '-')}",
+        ]
+
+        currency = account.get("currency")
+        if currency:
+            lines.append(f"Currency: {currency}")
+
+        # These fields may not be returned by older MT5 API versions.
+        lines.extend(
+            [
+                f"Balance: {_fmt_money(account.get('balance'))}",
+                f"Equity: {_fmt_money(account.get('equity'))}",
+                f"Free Margin: {_fmt_money(account.get('margin_free'))}",
+                f"Margin: {_fmt_money(account.get('margin'))}",
+                f"Profit: {_fmt_money(account.get('profit'))}",
+            ]
+        )
+
+        await update.message.reply_text("\n".join(lines))
+    except Exception as exc:
+        logger.exception("Account command failed")
+        await update.message.reply_text(f"Failed to fetch account info: {exc}")
 
 
 async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -455,6 +505,7 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("account", account_command))
     app.add_handler(CommandHandler("execute", execute_command))
     app.add_handler(CommandHandler("trades", trades_command))
     app.add_handler(CommandHandler("trim", trim_command))
