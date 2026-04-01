@@ -1,6 +1,6 @@
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pandas as pd
 from constants import MT5Timeframe
 import logging
@@ -10,7 +10,7 @@ import time
 logger = logging.getLogger(__name__)
 
 
-def _get_optional_login() -> int | None:
+def _get_optional_login() -> Optional[int]:
     raw_login = os.getenv("MT5_LOGIN") or os.getenv("MT5_ACCOUNT")
     if not raw_login:
         return None
