@@ -30,6 +30,7 @@ mt5_client = MT5Client()
 PENDING_EXECUTIONS_KEY = "pending_executions"
 PENDING_CLOSEALL_KEY = "pending_closeall"
 PENDING_TRIM_KEY = "pending_trim"
+LATEST_STRATEGY_KEY = "latest_strategy"
 
 
 def _is_owner(update: Update) -> bool:
@@ -108,6 +109,30 @@ def _pending_trim_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Dict[st
     if PENDING_TRIM_KEY not in context.application.bot_data:
         context.application.bot_data[PENDING_TRIM_KEY] = {}
     return context.application.bot_data[PENDING_TRIM_KEY]
+
+
+def _latest_strategy_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Any]:
+    if LATEST_STRATEGY_KEY not in context.application.bot_data:
+        context.application.bot_data[LATEST_STRATEGY_KEY] = {}
+    return context.application.bot_data[LATEST_STRATEGY_KEY]
+
+
+def _is_bid_within_range(bid: Any, range_low: Any, range_high: Any) -> Optional[bool]:
+    try:
+        bid_num = float(bid)
+        low = float(range_low)
+        high = float(range_high)
+    except (TypeError, ValueError):
+        return None
+    return low <= bid_num <= high
+
+
+def _format_within_range_label(within_range: Optional[bool]) -> str:
+    if within_range is True:
+        return "YES"
+    if within_range is False:
+        return "NO"
+    return "UNKNOWN"
 
 
 def _format_positions_preview(positions: list[Dict[str, Any]], max_items: int = 20) -> str:
@@ -260,6 +285,39 @@ async def account_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as exc:
         logger.exception("Account command failed")
         await update.message.reply_text(f"Failed to fetch account info: {exc}")
+
+
+async def check_strategy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _reject_if_not_owner(update):
+        return
+    try:
+        strategy = _latest_strategy_store(context)
+        if not strategy:
+            await update.message.reply_text("No stored strategy yet. Forward a signal first.")
+            return
+
+        symbol = strategy.get("symbol")
+        range_low = strategy.get("range_low")
+        range_high = strategy.get("range_high")
+        if not symbol:
+            await update.message.reply_text("Stored strategy is incomplete. Forward a new signal.")
+            return
+
+        tick = mt5_client.get_symbol_info_tick(symbol)
+        bid = tick.get("bid")
+        ask = tick.get("ask")
+        last = tick.get("last")
+        within_range = _is_bid_within_range(bid, range_low, range_high)
+
+        await update.message.reply_text(
+            f"Signal for asset: {symbol}\n"
+            f"Within range: {_format_within_range_label(within_range)}\n"
+            f"Market range: [{range_low:g}, {range_high:g}]\n"
+            f"Current market price (bid/ask/last): {bid} / {ask} / {last}"
+        )
+    except Exception as exc:
+        logger.exception("Check strategy command failed")
+        await update.message.reply_text(f"Failed to check strategy: {exc}")
 
 
 async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -675,6 +733,19 @@ async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_T
         bid = tick.get("bid")
         ask = tick.get("ask")
         last = tick.get("last")
+        within_range = _is_bid_within_range(bid, signal.range_low, signal.range_high)
+        strategy_store = _latest_strategy_store(context)
+        strategy_store.clear()
+        strategy_store.update(
+            {
+                "symbol": symbol,
+                "range_low": signal.range_low,
+                "range_high": signal.range_high,
+                "action": signal.action,
+                "stop_loss": signal.stop_loss,
+                "take_profits": signal.take_profits,
+            }
+        )
         logger.info(
             "forwarded_signal_probe tick success symbol=%s bid=%s ask=%s last=%s",
             symbol,
@@ -683,7 +754,9 @@ async def forwarded_signal_probe(update: Update, context: ContextTypes.DEFAULT_T
             last,
         )
         await update.message.reply_text(
-            f"Received signal for asset: {symbol}\n"
+            f"Signal for asset: {symbol}\n"
+            f"Within range: {_format_within_range_label(within_range)}\n"
+            f"Market range: [{signal.range_low:g}, {signal.range_high:g}]\n"
             f"Current market price (bid/ask/last): {bid} / {ask} / {last}\n\n"
             "Reply to this forwarded message with /execute <usd_integer> to continue."
         )
@@ -709,6 +782,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("account", account_command))
+    app.add_handler(CommandHandler("check_strategy", check_strategy_command))
     app.add_handler(CommandHandler("execute", execute_command))
     app.add_handler(CommandHandler("trades", trades_command))
     app.add_handler(CommandHandler("trim", trim_command))
